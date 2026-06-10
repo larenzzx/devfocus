@@ -1,13 +1,34 @@
 import { BarChart3 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 
+export interface DailyStat {
+  day: string;
+  date: string;
+  val: number;
+  isToday: boolean;
+}
+
 interface StatsWidgetProps {
   totalFocusMinutes: number;
   completedTasksCount: number;
   efficiency: number;
+  weekData: DailyStat[];
 }
 
-export function StatsWidget({ totalFocusMinutes, completedTasksCount, efficiency }: StatsWidgetProps) {
+export function StatsWidget({ totalFocusMinutes, completedTasksCount, efficiency, weekData }: StatsWidgetProps) {
+  // Find the maximum focus minutes in the week to scale the bar heights dynamically (minimum 100 to look natural)
+  const maxMinutes = Math.max(...weekData.map((d) => d.val), 100);
+
+  const formatDateLabel = (dateStr: string): string => {
+    try {
+      const [year, month, day] = dateStr.split("-").map(Number);
+      const date = new Date(year, month - 1, day);
+      return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    } catch (e) {
+      return dateStr;
+    }
+  };
+
   return (
     <Card className="bg-slate-900/45 backdrop-blur-md border border-white/8 rounded-2xl shadow-xl flex flex-col justify-between">
       <CardHeader className="pb-2">
@@ -37,29 +58,28 @@ export function StatsWidget({ totalFocusMinutes, completedTasksCount, efficiency
 
         {/* Custom CSS Mini Bar Chart */}
         <div className="flex flex-col gap-2">
-          <div className="flex justify-between items-end h-16 px-2 bg-slate-950/35 border border-white/5 rounded-xl py-2">
-            {[
-              { day: "M", val: 30 },
-              { day: "T", val: 55 },
-              { day: "W", val: 80 },
-              { day: "T", val: 45 },
-              { day: "F", val: 65 },
-              { day: "S", val: 15 },
-              { day: "S", val: 20 },
-            ].map((item, idx) => (
-              <div key={idx} className="flex flex-col items-center flex-1 gap-1">
-                <div className="w-4 bg-slate-800 rounded-sm overflow-hidden h-12 flex items-end">
-                  <div 
-                    className={`w-full rounded-sm transition-all duration-500 ${
-                      idx === 2 ? "bg-primary shadow-[0_0_8px_rgba(34,197,94,0.4)]" : "bg-slate-500"
-                    }`}
-                    style={{ height: `${item.val}%` }}
-                    title={`${item.val} mins`}
-                  />
+          <div className="flex justify-between items-end px-2 bg-slate-950/35 border border-white/5 rounded-xl py-3.5">
+            {weekData.map((item, idx) => {
+              const heightPercent = Math.min(100, Math.max(0, (item.val / maxMinutes) * 100));
+              return (
+                <div key={idx} className="flex flex-col items-center flex-1 gap-1">
+                  <div className="w-4 bg-slate-800/50 rounded-sm h-12 flex items-end">
+                    <div 
+                      className={`w-full rounded-sm transition-all duration-500 cursor-pointer ${
+                        item.isToday 
+                          ? "bg-primary shadow-[0_0_8px_rgba(34,197,94,0.4)]" 
+                          : "bg-slate-500 hover:bg-slate-400"
+                      }`}
+                      style={{ height: `${heightPercent}%` }}
+                      title={`${formatDateLabel(item.date)}: ${item.val} mins`}
+                    />
+                  </div>
+                  <span className={`text-[9px] font-mono ${item.isToday ? "text-primary font-bold" : "text-slate-400"}`}>
+                    {item.day}
+                  </span>
                 </div>
-                <span className="text-[9px] font-mono text-slate-400">{item.day}</span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

@@ -53,9 +53,10 @@ export default function App() {
     pendingAction,
     showCompletionDialog,
     setShowCompletionDialog,
-    completedMode,
     cancelSwitch,
     confirmSwitch,
+    completedMode,
+    weekData,
   } = useTimer(scheduleNotification, cancelNotification);
 
   const {
@@ -139,6 +140,7 @@ export default function App() {
           totalFocusMinutes={totalFocusMinutes}
           completedTasksCount={completedTasksCount}
           efficiency={efficiency}
+          weekData={weekData}
         />
 
         {/* AUDIO ENGINE */}

@@ -1,15 +1,130 @@
 import { useState, useEffect } from "react";
 
+export interface DailyStat {
+  day: string;
+  date: string;
+  val: number;
+  isToday: boolean;
+}
+
 const DURATIONS = {
   focus: 25 * 60,
   short: 5 * 60,
   long: 15 * 60,
 };
 
+const getManilaDateString = (date: Date = new Date()): string => {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+};
+
+const getManilaWeekDates = (date: Date = new Date()): string[] => {
+  const dayOfWeekName = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Manila",
+    weekday: "long"
+  }).format(date);
+  
+  const dayMap: { [key: string]: number } = {
+    Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6
+  };
+  
+  const dayOfWeek = dayMap[dayOfWeekName];
+  const mondayDelta = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  
+  const weekDates: string[] = [];
+  for (let i = 0; i < 7; i++) {
+    const deltaDays = mondayDelta + i;
+    const shiftedDate = new Date(date.getTime() + deltaDays * 24 * 60 * 60 * 1000);
+    weekDates.push(getManilaDateString(shiftedDate));
+  }
+  return weekDates;
+};
+
+const preseedHistoryIfNeeded = () => {
+  const historyKey = "devfocus_history";
+  const existingHistory = localStorage.getItem(historyKey);
+  
+  if (!existingHistory) {
+    const todayStr = getManilaDateString();
+    const weekDates = getManilaWeekDates();
+    const newHistory: { [key: string]: number } = {};
+    
+    const seedValues = [50, 100, 75, 50, 75, 25, 0];
+    let preseededSessionsCount = 0;
+    
+    weekDates.forEach((dateStr, idx) => {
+      if (dateStr < todayStr) {
+        newHistory[dateStr] = seedValues[idx];
+        preseededSessionsCount += seedValues[idx] / 25;
+      } else {
+        newHistory[dateStr] = 0;
+      }
+    });
+    
+    localStorage.setItem(historyKey, JSON.stringify(newHistory));
+    
+    const existingSessions = localStorage.getItem("devfocus_sessions");
+    if (!existingSessions || parseInt(existingSessions, 10) === 0) {
+      localStorage.setItem("devfocus_sessions", preseededSessionsCount.toString());
+    }
+  }
+};
+
+const recordSessionInHistory = () => {
+  const historyKey = "devfocus_history";
+  const todayStr = getManilaDateString();
+  
+  let history: { [key: string]: number } = {};
+  try {
+    const raw = localStorage.getItem(historyKey);
+    if (raw) {
+      history = JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error("Failed to parse devfocus_history", e);
+  }
+  
+  history[todayStr] = (history[todayStr] || 0) + 25;
+  localStorage.setItem(historyKey, JSON.stringify(history));
+};
+
+const getWeekDataList = (): DailyStat[] => {
+  const historyKey = "devfocus_history";
+  const todayStr = getManilaDateString();
+  const weekDates = getManilaWeekDates();
+  const dayLabels = ["M", "T", "W", "T", "F", "S", "S"];
+  
+  let history: { [key: string]: number } = {};
+  try {
+    const raw = localStorage.getItem(historyKey);
+    if (raw) {
+      history = JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error("Failed to parse devfocus_history", e);
+  }
+  
+  return weekDates.map((dateStr, idx) => {
+    return {
+      day: dayLabels[idx],
+      date: dateStr,
+      val: history[dateStr] || 0,
+      isToday: dateStr === todayStr,
+    };
+  });
+};
+
 export function useTimer(
   scheduleNotification: (seconds: number, mode: "focus" | "short" | "long") => Promise<void>,
   cancelNotification: () => Promise<void>
 ) {
+  // Ensure history is preseeded before any state initializations
+  preseedHistoryIfNeeded();
+
   const [timerMode, setTimerMode] = useState<"focus" | "short" | "long">(() => {
     const saved = localStorage.getItem("devfocus_timer_mode");
     return (saved === "focus" || saved === "short" || saved === "long") ? saved : "focus";
@@ -21,6 +136,10 @@ export function useTimer(
 
   const [sessionsCompleted, setSessionsCompleted] = useState(() => {
     return parseInt(localStorage.getItem("devfocus_sessions") || "0", 10);
+  });
+
+  const [weekData, setWeekData] = useState<DailyStat[]>(() => {
+    return getWeekDataList();
   });
 
   const [timeLeft, setTimeLeft] = useState(() => {
@@ -139,6 +258,8 @@ export function useTimer(
             const updatedSessions = sessionsCompleted + 1;
             setSessionsCompleted(updatedSessions);
             localStorage.setItem("devfocus_sessions", updatedSessions.toString());
+            recordSessionInHistory();
+            setWeekData(getWeekDataList());
           }
 
           // Show completion modal
@@ -259,5 +380,6 @@ export function useTimer(
     DURATIONS,
     cancelSwitch,
     confirmSwitch,
+    weekData,
   };
 }
