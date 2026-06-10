@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 
 // Motivational quotes for developers
@@ -44,6 +45,7 @@ export default function App() {
   // --- OneSignal Push Notification State ---
   const [oneSignalId, setOneSignalId] = useState<string | null>(null);
   const activeNotificationIdRef = useRef<string | null>(null);
+  const [showIOSPrompt, setShowIOSPrompt] = useState(false);
 
   useEffect(() => {
     (window as any).OneSignalDeferred = (window as any).OneSignalDeferred || [];
@@ -64,10 +66,22 @@ export default function App() {
   }, []);
 
   const requestNotificationPermission = async () => {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+    const isStandalone = (window.navigator as any).standalone === true || window.matchMedia('(display-mode: standalone)').matches;
+
+    if (isIOS && !isStandalone) {
+      setShowIOSPrompt(true);
+      return;
+    }
+
     (window as any).OneSignalDeferred = (window as any).OneSignalDeferred || [];
     (window as any).OneSignalDeferred.push(async function(OneSignal: any) {
       try {
         await OneSignal.Notifications.requestPermission();
+        const subId = OneSignal.User.PushSubscription.id;
+        if (subId) {
+          setOneSignalId(subId);
+        }
       } catch (err) {
         console.error("Failed to request permission:", err);
       }
@@ -122,73 +136,127 @@ export default function App() {
   };
 
   // --- Pomodoro Timer State ---
-  const [timerMode, setTimerMode] = useState<"focus" | "short" | "long">("focus");
-  const [timeLeft, setTimeLeft] = useState(25 * 60);
-  const [isRunning, setIsRunning] = useState(false);
-  const [sessionsCompleted, setSessionsCompleted] = useState(() => {
-    return parseInt(localStorage.getItem("devfocus_sessions") || "0", 10);
-  });
-  
-  const timerRef = useRef<any>(null);
-
-  // Time durations in seconds
   const DURATIONS = {
     focus: 25 * 60,
     short: 5 * 60,
     long: 15 * 60,
   };
 
+  const [timerMode, setTimerMode] = useState<"focus" | "short" | "long">(() => {
+    const saved = localStorage.getItem("devfocus_timer_mode");
+    return (saved === "focus" || saved === "short" || saved === "long") ? saved : "focus";
+  });
+
+  const [isRunning, setIsRunning] = useState(() => {
+    return localStorage.getItem("devfocus_is_running") === "true";
+  });
+
+  const [sessionsCompleted, setSessionsCompleted] = useState(() => {
+    return parseInt(localStorage.getItem("devfocus_sessions") || "0", 10);
+  });
+
+  const [timeLeft, setTimeLeft] = useState(() => {
+    const savedIsRunning = localStorage.getItem("devfocus_is_running") === "true";
+    const saved = localStorage.getItem("devfocus_timer_mode");
+    const savedMode = (saved === "focus" || saved === "short" || saved === "long") ? saved : "focus";
+    const duration = DURATIONS[savedMode];
+
+    if (savedIsRunning) {
+      const savedEndTime = localStorage.getItem("devfocus_end_time");
+      if (savedEndTime) {
+        const remaining = Math.ceil((parseInt(savedEndTime, 10) - Date.now()) / 1000);
+        return remaining > 0 ? remaining : 0;
+      }
+    }
+    const savedTimeLeft = localStorage.getItem("devfocus_time_left");
+    return savedTimeLeft ? parseInt(savedTimeLeft, 10) : duration;
+  });
+
   // Sync mode changes with time
   const handleModeChange = (mode: "focus" | "short" | "long") => {
     setTimerMode(mode);
     setIsRunning(false);
     setTimeLeft(DURATIONS[mode]);
+
+    localStorage.setItem("devfocus_timer_mode", mode);
+    localStorage.setItem("devfocus_is_running", "false");
+    localStorage.setItem("devfocus_time_left", DURATIONS[mode].toString());
+    localStorage.removeItem("devfocus_end_time");
+
     cancelNotification();
   };
 
   const toggleTimer = () => {
     const nextIsRunning = !isRunning;
     setIsRunning(nextIsRunning);
+    localStorage.setItem("devfocus_is_running", nextIsRunning.toString());
+
     if (nextIsRunning) {
+      const targetEnd = Date.now() + timeLeft * 1000;
+      localStorage.setItem("devfocus_end_time", targetEnd.toString());
+      localStorage.setItem("devfocus_timer_mode", timerMode);
       scheduleNotification(timeLeft);
     } else {
+      localStorage.setItem("devfocus_time_left", timeLeft.toString());
+      localStorage.removeItem("devfocus_end_time");
       cancelNotification();
     }
   };
 
   // Timer Tick Logic
   useEffect(() => {
+    let intervalId: any = null;
+
     if (isRunning) {
-      timerRef.current = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            // Timer finished
+      const savedEndTime = localStorage.getItem("devfocus_end_time");
+      let targetEndTime = savedEndTime ? parseInt(savedEndTime, 10) : Date.now() + timeLeft * 1000;
+      if (!savedEndTime) {
+        localStorage.setItem("devfocus_end_time", targetEndTime.toString());
+      }
+
+      const checkTimer = () => {
+        const now = Date.now();
+        const remaining = Math.max(0, Math.ceil((targetEndTime - now) / 1000));
+        setTimeLeft(remaining);
+
+        if (remaining <= 0) {
+          clearInterval(intervalId);
+          setIsRunning(false);
+          localStorage.setItem("devfocus_is_running", "false");
+          localStorage.removeItem("devfocus_end_time");
+
+          // Only play alarm sound if the timer completed within the last 10 seconds.
+          if (now - targetEndTime < 10000) {
             playAlarmSound();
-            setIsRunning(false);
-            activeNotificationIdRef.current = null; // Clear scheduled alert ID
-            if (timerMode === "focus") {
-              const updatedSessions = sessionsCompleted + 1;
-              setSessionsCompleted(updatedSessions);
-              localStorage.setItem("devfocus_sessions", updatedSessions.toString());
-            }
-            // Switch mode automatically
-            if (timerMode === "focus") {
-              handleModeChange("short");
-            } else {
-              handleModeChange("focus");
-            }
-            return 0;
           }
-          return prev - 1;
-        });
-      }, 1000);
+          activeNotificationIdRef.current = null;
+
+          if (timerMode === "focus") {
+            const updatedSessions = sessionsCompleted + 1;
+            setSessionsCompleted(updatedSessions);
+            localStorage.setItem("devfocus_sessions", updatedSessions.toString());
+          }
+
+          // Switch mode automatically
+          const nextMode = timerMode === "focus" ? "short" : "focus";
+          setTimerMode(nextMode);
+          localStorage.setItem("devfocus_timer_mode", nextMode);
+          setTimeLeft(DURATIONS[nextMode]);
+          localStorage.setItem("devfocus_time_left", DURATIONS[nextMode].toString());
+          cancelNotification();
+        }
+      };
+
+      checkTimer();
+      intervalId = setInterval(checkTimer, 200);
     } else {
-      if (timerRef.current) clearInterval(timerRef.current);
+      localStorage.setItem("devfocus_time_left", timeLeft.toString());
     }
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (intervalId) clearInterval(intervalId);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning, timerMode, sessionsCompleted]);
 
   // Update browser tab title with remaining time
@@ -199,6 +267,24 @@ export default function App() {
     const modeLabel = timerMode === "focus" ? "Focus" : "Break";
     document.title = isRunning ? `(${formattedTime}) ${modeLabel} | DevFocus` : "DevFocus";
   }, [timeLeft, isRunning, timerMode]);
+
+  // Hook for page visibility changes to snap the timer when returning
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible" && isRunning) {
+        const savedEndTime = localStorage.getItem("devfocus_end_time");
+        if (savedEndTime) {
+          const remaining = Math.max(0, Math.ceil((parseInt(savedEndTime, 10) - Date.now()) / 1000));
+          setTimeLeft(remaining);
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [isRunning]);
 
   // play simple synthesized tone when timer ends
   const playAlarmSound = () => {
@@ -821,7 +907,7 @@ export default function App() {
                       key={i} 
                       className="w-1 bg-primary rounded-t-full animate-bounce" 
                       style={{ 
-                        height: `${Math.floor(Math.random() * 80) + 20}%`, 
+                        height: `${((i * 13) % 70) + 20}%`, 
                         animationDelay: `${i * 0.1}s`,
                         animationDuration: '0.6s'
                       }} 
@@ -911,6 +997,40 @@ export default function App() {
           <RefreshCw className="size-3" /> Next
         </button>
       </footer>
+
+      {/* iOS PWA Installation Prompt Dialog */}
+      <Dialog open={showIOSPrompt} onOpenChange={setShowIOSPrompt}>
+        <DialogContent className="bg-slate-900 border border-white/8 text-white max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-white flex items-center gap-2 font-mono">
+              <Sparkles className="size-4.5 text-primary animate-pulse" /> Install DevFocus
+            </DialogTitle>
+            <DialogDescription className="text-slate-400 text-xs">
+              To enable mobile alerts on iOS, Safari requires you to install this app to your Home Screen:
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 my-2 text-xs font-mono text-slate-300">
+            <div className="flex gap-2.5 items-start bg-slate-950/40 p-2.5 border border-white/5 rounded-xl">
+              <div className="bg-primary/10 text-primary text-[10px] size-5 rounded-full flex items-center justify-center shrink-0 border border-primary/20">1</div>
+              <p>Tap the <span className="font-bold text-white">Share</span> button in Safari (square with an up arrow).</p>
+            </div>
+            <div className="flex gap-2.5 items-start bg-slate-950/40 p-2.5 border border-white/5 rounded-xl">
+              <div className="bg-primary/10 text-primary text-[10px] size-5 rounded-full flex items-center justify-center shrink-0 border border-primary/20">2</div>
+              <p>Scroll down the list and tap <span className="font-bold text-white">Add to Home Screen</span>.</p>
+            </div>
+            <div className="flex gap-2.5 items-start bg-slate-950/40 p-2.5 border border-white/5 rounded-xl">
+              <div className="bg-primary/10 text-primary text-[10px] size-5 rounded-full flex items-center justify-center shrink-0 border border-primary/20">3</div>
+              <p>Launch <span className="font-bold text-white">DevFocus</span> from your Home Screen and enable alerts.</p>
+            </div>
+          </div>
+          <Button 
+            onClick={() => setShowIOSPrompt(false)} 
+            className="cursor-pointer w-full bg-primary text-primary-foreground font-mono text-xs font-bold py-2 rounded-xl"
+          >
+            Got it
+          </Button>
+        </DialogContent>
+      </Dialog>
 
     </div>
   );
