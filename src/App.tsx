@@ -46,6 +46,7 @@ export default function App() {
   const [oneSignalId, setOneSignalId] = useState<string | null>(null);
   const activeNotificationIdRef = useRef<string | null>(null);
   const [showIOSPrompt, setShowIOSPrompt] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState<string | null>(null);
 
   useEffect(() => {
     (window as any).OneSignalDeferred = (window as any).OneSignalDeferred || [];
@@ -90,8 +91,12 @@ export default function App() {
 
   // Schedule background alert
   const scheduleNotification = async (seconds: number) => {
-    if (!oneSignalId) return;
+    if (!oneSignalId) {
+      setNotificationStatus("No subscription ID found");
+      return;
+    }
     await cancelNotification(); // Cancel existing scheduled alert first
+    setNotificationStatus("Scheduling background alarm...");
 
     const title = timerMode === "focus" ? "Break Time! ☕" : "Focus Time! 💻";
     const message = timerMode === "focus" 
@@ -110,11 +115,15 @@ export default function App() {
         })
       });
       const data = await response.json();
-      if (data.notificationId) {
+      if (response.ok && data.notificationId) {
         activeNotificationIdRef.current = data.notificationId;
+        setNotificationStatus("Alarm scheduled in background");
+      } else {
+        setNotificationStatus(`Failed: ${data.error || 'Server error'}`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to schedule background notification:", err);
+      setNotificationStatus(`Network error: ${err.message || 'Failed to connect'}`);
     }
   };
 
@@ -122,16 +131,24 @@ export default function App() {
   const cancelNotification = async () => {
     if (!activeNotificationIdRef.current) return;
     try {
-      await fetch('/api/cancel', {
+      setNotificationStatus("Cancelling background alarm...");
+      const response = await fetch('/api/cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           notificationId: activeNotificationIdRef.current
         })
       });
-      activeNotificationIdRef.current = null;
-    } catch (err) {
+      const data = await response.json();
+      if (response.ok) {
+        activeNotificationIdRef.current = null;
+        setNotificationStatus(null);
+      } else {
+        setNotificationStatus(`Cancel Failed: ${data.error || 'Server error'}`);
+      }
+    } catch (err: any) {
       console.error("Failed to cancel background notification:", err);
+      setNotificationStatus(`Cancel error: ${err.message || 'Failed'}`);
     }
   };
 
@@ -172,6 +189,12 @@ export default function App() {
     return savedTimeLeft ? parseInt(savedTimeLeft, 10) : duration;
   });
 
+  const [showConfirmSwitchDialog, setShowConfirmSwitchDialog] = useState(false);
+  const [pendingMode, setPendingMode] = useState<"focus" | "short" | "long" | null>(null);
+
+  const [showCompletionDialog, setShowCompletionDialog] = useState(false);
+  const [completedMode, setCompletedMode] = useState<"focus" | "short" | "long" | null>(null);
+
   // Sync mode changes with time
   const handleModeChange = (mode: "focus" | "short" | "long") => {
     setTimerMode(mode);
@@ -184,6 +207,15 @@ export default function App() {
     localStorage.removeItem("devfocus_end_time");
 
     cancelNotification();
+  };
+
+  const onModeTabClick = (mode: "focus" | "short" | "long") => {
+    if (isRunning && timerMode !== mode) {
+      setPendingMode(mode);
+      setShowConfirmSwitchDialog(true);
+    } else {
+      handleModeChange(mode);
+    }
   };
 
   const toggleTimer = () => {
@@ -236,6 +268,10 @@ export default function App() {
             setSessionsCompleted(updatedSessions);
             localStorage.setItem("devfocus_sessions", updatedSessions.toString());
           }
+
+          // Show completion modal
+          setCompletedMode(timerMode);
+          setShowCompletionDialog(true);
 
           // Switch mode automatically
           const nextMode = timerMode === "focus" ? "short" : "focus";
@@ -620,7 +656,7 @@ export default function App() {
             {/* Mode Selector Tab buttons */}
             <div className="flex bg-slate-950/50 border border-white/5 p-1 rounded-xl w-fit">
               <button
-                onClick={() => handleModeChange("focus")}
+                onClick={() => onModeTabClick("focus")}
                 className={`cursor-pointer px-4 py-1.5 rounded-lg text-xs font-mono transition-all ${
                   timerMode === "focus" 
                     ? "bg-primary text-primary-foreground font-bold shadow-md" 
@@ -630,7 +666,7 @@ export default function App() {
                 Focus (25m)
               </button>
               <button
-                onClick={() => handleModeChange("short")}
+                onClick={() => onModeTabClick("short")}
                 className={`cursor-pointer px-4 py-1.5 rounded-lg text-xs font-mono transition-all ${
                   timerMode === "short" 
                     ? "bg-accent text-accent-foreground font-bold shadow-md" 
@@ -640,7 +676,7 @@ export default function App() {
                 Short Break (5m)
               </button>
               <button
-                onClick={() => handleModeChange("long")}
+                onClick={() => onModeTabClick("long")}
                 className={`cursor-pointer px-4 py-1.5 rounded-lg text-xs font-mono transition-all ${
                   timerMode === "long" 
                     ? "bg-slate-800 text-white font-bold shadow-md" 
@@ -659,6 +695,11 @@ export default function App() {
               <p className="text-xs font-mono tracking-widest text-muted-foreground uppercase mt-2">
                 {isRunning ? "Session in progress" : "Timer Paused"}
               </p>
+              {isRunning && notificationStatus && (
+                <p className="text-[10px] font-mono text-slate-400 mt-2 animate-pulse">
+                  📡 {notificationStatus}
+                </p>
+              )}
             </div>
 
             {/* Progress Bar */}
@@ -1026,6 +1067,69 @@ export default function App() {
           <Button 
             onClick={() => setShowIOSPrompt(false)} 
             className="cursor-pointer w-full bg-primary text-primary-foreground font-mono text-xs font-bold py-2 rounded-xl"
+          >
+            Got it
+          </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Active Timer Switch Confirmation Dialog */}
+      <Dialog open={showConfirmSwitchDialog} onOpenChange={setShowConfirmSwitchDialog}>
+        <DialogContent className="bg-slate-900 border border-white/8 text-white max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-white flex items-center gap-2 font-mono">
+              <Clock className="size-4.5 text-red-400" /> Stop Running Timer?
+            </DialogTitle>
+            <DialogDescription className="text-slate-400 text-xs">
+              You currently have an active focus or break timer running. Switching tabs now will stop your progress.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 mt-2">
+            <Button 
+              variant="outline"
+              onClick={() => {
+                setShowConfirmSwitchDialog(false);
+                setPendingMode(null);
+              }} 
+              className="cursor-pointer flex-1 border-white/10 hover:border-white/20 hover:bg-slate-800 text-white font-mono text-xs font-bold py-2.5 rounded-xl"
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={() => {
+                if (pendingMode) {
+                  handleModeChange(pendingMode);
+                }
+                setShowConfirmSwitchDialog(false);
+                setPendingMode(null);
+              }} 
+              className="cursor-pointer flex-1 bg-red-500 hover:bg-red-650 text-white font-mono text-xs font-bold py-2.5 rounded-xl"
+            >
+              Stop & Switch
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Timer Completion Dialog */}
+      <Dialog open={showCompletionDialog} onOpenChange={setShowCompletionDialog}>
+        <DialogContent className="bg-slate-900 border border-white/8 text-white max-w-sm text-center">
+          <DialogHeader className="items-center">
+            <div className="bg-primary/10 p-3 rounded-full border border-primary/20 text-primary w-fit animate-bounce mb-2">
+              <Sparkles className="size-8" />
+            </div>
+            <DialogTitle className="text-white text-lg font-bold font-mono">
+              {completedMode === "focus" ? "Session Complete! 🎉" : "Break Over! ☕"}
+            </DialogTitle>
+            <DialogDescription className="text-slate-300 text-xs mt-1">
+              {completedMode === "focus" 
+                ? "Excellent job staying focused! Your work block is complete. Time to take a well-deserved break." 
+                : "Your break time has finished. Ready to get back into the zone and write some code?"}
+            </DialogDescription>
+          </DialogHeader>
+          <Button 
+            onClick={() => setShowCompletionDialog(false)} 
+            className="cursor-pointer w-full bg-primary text-primary-foreground font-mono text-xs font-bold py-2 rounded-xl mt-4"
           >
             Got it
           </Button>
