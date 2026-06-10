@@ -12,6 +12,7 @@ import { useOneSignal } from "@/hooks/useOneSignal";
 import { useTimer } from "@/hooks/useTimer";
 import { useTasks } from "@/hooks/useTasks";
 import { useAudioSynthesizer } from "@/hooks/useAudioSynthesizer";
+import { useWakeLock } from "@/hooks/useWakeLock";
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -80,6 +81,9 @@ export default function App() {
   } = useAudioSynthesizer();
 
   const totalFocusMinutes = sessionsCompleted * 25;
+
+  // Prevent screen sleep during active focus/sound sessions
+  useWakeLock(isRunning || soundMode !== "none");
 
   return (
     <div className="min-h-screen w-full flex flex-col justify-between p-4 md:p-8 select-none">
