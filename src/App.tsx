@@ -41,6 +41,86 @@ export default function App() {
     setQuote(QUOTES[randomIndex]);
   };
 
+  // --- OneSignal Push Notification State ---
+  const [oneSignalId, setOneSignalId] = useState<string | null>(null);
+  const activeNotificationIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    (window as any).OneSignalDeferred = (window as any).OneSignalDeferred || [];
+    (window as any).OneSignalDeferred.push(async function(OneSignal: any) {
+      await OneSignal.init({
+        appId: "fb88458d-29aa-47c2-ba1c-ab3c117132fe",
+      });
+
+      // Get current subscription ID
+      const subId = OneSignal.User.PushSubscription.id;
+      setOneSignalId(subId || null);
+
+      // Listen for subscription changes
+      OneSignal.User.PushSubscription.addEventListener("change", (event: any) => {
+        setOneSignalId(event.current.id || null);
+      });
+    });
+  }, []);
+
+  const requestNotificationPermission = async () => {
+    (window as any).OneSignalDeferred = (window as any).OneSignalDeferred || [];
+    (window as any).OneSignalDeferred.push(async function(OneSignal: any) {
+      try {
+        await OneSignal.Notifications.requestPermission();
+      } catch (err) {
+        console.error("Failed to request permission:", err);
+      }
+    });
+  };
+
+  // Schedule background alert
+  const scheduleNotification = async (seconds: number) => {
+    if (!oneSignalId) return;
+    await cancelNotification(); // Cancel existing scheduled alert first
+
+    const title = timerMode === "focus" ? "Break Time! ☕" : "Focus Time! 💻";
+    const message = timerMode === "focus" 
+      ? "Great job focusing! Take a well-deserved break." 
+      : "Break is over. Let's get back to building!";
+
+    try {
+      const response = await fetch('/api/schedule', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscriptionId: oneSignalId,
+          seconds,
+          title,
+          message
+        })
+      });
+      const data = await response.json();
+      if (data.notificationId) {
+        activeNotificationIdRef.current = data.notificationId;
+      }
+    } catch (err) {
+      console.error("Failed to schedule background notification:", err);
+    }
+  };
+
+  // Cancel background alert
+  const cancelNotification = async () => {
+    if (!activeNotificationIdRef.current) return;
+    try {
+      await fetch('/api/cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          notificationId: activeNotificationIdRef.current
+        })
+      });
+      activeNotificationIdRef.current = null;
+    } catch (err) {
+      console.error("Failed to cancel background notification:", err);
+    }
+  };
+
   // --- Pomodoro Timer State ---
   const [timerMode, setTimerMode] = useState<"focus" | "short" | "long">("focus");
   const [timeLeft, setTimeLeft] = useState(25 * 60);
@@ -63,6 +143,17 @@ export default function App() {
     setTimerMode(mode);
     setIsRunning(false);
     setTimeLeft(DURATIONS[mode]);
+    cancelNotification();
+  };
+
+  const toggleTimer = () => {
+    const nextIsRunning = !isRunning;
+    setIsRunning(nextIsRunning);
+    if (nextIsRunning) {
+      scheduleNotification(timeLeft);
+    } else {
+      cancelNotification();
+    }
   };
 
   // Timer Tick Logic
@@ -74,6 +165,7 @@ export default function App() {
             // Timer finished
             playAlarmSound();
             setIsRunning(false);
+            activeNotificationIdRef.current = null; // Clear scheduled alert ID
             if (timerMode === "focus") {
               const updatedSessions = sessionsCompleted + 1;
               setSessionsCompleted(updatedSessions);
@@ -387,6 +479,22 @@ export default function App() {
           </div>
         </div>
 
+        {/* OneSignal Notification Button */}
+        <div className="flex items-center gap-2">
+          {!oneSignalId ? (
+            <button
+              onClick={requestNotificationPermission}
+              className="cursor-pointer text-xs font-mono bg-primary/10 text-primary border border-primary/25 hover:bg-primary/20 transition-all px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 shadow-[0_0_12px_rgba(34,197,94,0.1)] hover:shadow-[0_0_18px_rgba(34,197,94,0.2)] animate-pulse"
+            >
+              <Sparkles className="size-3.5" /> Enable Mobile Alerts
+            </button>
+          ) : (
+            <div className="text-xs font-mono text-slate-400 bg-slate-950/40 border border-white/5 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+              <Check className="size-3.5 text-primary" /> Alerts Active
+            </div>
+          )}
+        </div>
+
         {/* Live Date / Time */}
         <div className="flex items-center gap-4 text-right">
           <div className="hidden sm:block">
@@ -490,7 +598,7 @@ export default function App() {
 
               <Button
                 size="lg"
-                onClick={() => setIsRunning(!isRunning)}
+                onClick={toggleTimer}
                 className={`cursor-pointer rounded-full w-28 h-10 shadow-lg transition-transform active:scale-95 text-xs font-bold font-mono tracking-wider ${
                   isRunning 
                     ? "bg-red-500 hover:bg-red-600 text-white" 
