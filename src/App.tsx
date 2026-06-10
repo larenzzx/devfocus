@@ -191,6 +191,7 @@ export default function App() {
 
   const [showConfirmSwitchDialog, setShowConfirmSwitchDialog] = useState(false);
   const [pendingMode, setPendingMode] = useState<"focus" | "short" | "long" | null>(null);
+  const [pendingAction, setPendingAction] = useState<"switch" | "reset" | "skip" | null>(null);
 
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [completedMode, setCompletedMode] = useState<"focus" | "short" | "long" | null>(null);
@@ -211,10 +212,31 @@ export default function App() {
 
   const onModeTabClick = (mode: "focus" | "short" | "long") => {
     if (isRunning && timerMode !== mode) {
+      setPendingAction("switch");
       setPendingMode(mode);
       setShowConfirmSwitchDialog(true);
     } else {
       handleModeChange(mode);
+    }
+  };
+
+  const onResetClick = () => {
+    if (isRunning) {
+      setPendingAction("reset");
+      setShowConfirmSwitchDialog(true);
+    } else {
+      handleModeChange(timerMode);
+    }
+  };
+
+  const onSkipClick = () => {
+    const nextMode = timerMode === "focus" ? "short" : "focus";
+    if (isRunning) {
+      setPendingAction("skip");
+      setPendingMode(nextMode);
+      setShowConfirmSwitchDialog(true);
+    } else {
+      handleModeChange(nextMode);
     }
   };
 
@@ -716,13 +738,13 @@ export default function App() {
               <Button 
                 variant="outline" 
                 size="icon" 
-                onClick={() => handleModeChange(timerMode)}
+                onClick={onResetClick}
                 className="cursor-pointer border-white/10 hover:border-white/20 hover:bg-slate-800 rounded-full"
                 title="Reset timer"
               >
                 <RotateCcw className="size-4 text-slate-300" />
               </Button>
-
+ 
               <Button
                 size="lg"
                 onClick={toggleTimer}
@@ -742,17 +764,11 @@ export default function App() {
                   </>
                 )}
               </Button>
-
+ 
               <Button 
                 variant="outline" 
                 size="icon" 
-                onClick={() => {
-                  if (timerMode === "focus") {
-                    handleModeChange("short");
-                  } else {
-                    handleModeChange("focus");
-                  }
-                }}
+                onClick={onSkipClick}
                 className="cursor-pointer border-white/10 hover:border-white/20 hover:bg-slate-800 rounded-full"
                 title="Skip session"
               >
@@ -1078,10 +1094,16 @@ export default function App() {
         <DialogContent className="bg-slate-900 border border-white/8 text-white max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-white flex items-center gap-2 font-mono">
-              <Clock className="size-4.5 text-red-400" /> Stop Running Timer?
+              <Clock className="size-4.5 text-red-400" />
+              {pendingAction === "reset" ? "Reset Running Timer?" : 
+               pendingAction === "skip" ? "Skip Running Timer?" : "Stop Running Timer?"}
             </DialogTitle>
             <DialogDescription className="text-slate-400 text-xs">
-              You currently have an active focus or break timer running. Switching tabs now will stop your progress.
+              {pendingAction === "reset" 
+                ? "You currently have an active timer running. Resetting now will stop your progress and restart the countdown."
+                : pendingAction === "skip"
+                ? "You currently have an active timer running. Skipping now will stop your progress and move to the next session."
+                : "You currently have an active focus or break timer running. Switching tabs now will stop your progress."}
             </DialogDescription>
           </DialogHeader>
           <div className="flex gap-3 mt-2">
@@ -1090,6 +1112,7 @@ export default function App() {
               onClick={() => {
                 setShowConfirmSwitchDialog(false);
                 setPendingMode(null);
+                setPendingAction(null);
               }} 
               className="cursor-pointer flex-1 border-white/10 hover:border-white/20 hover:bg-slate-800 text-white font-mono text-xs font-bold py-2.5 rounded-xl"
             >
@@ -1097,15 +1120,20 @@ export default function App() {
             </Button>
             <Button 
               onClick={() => {
-                if (pendingMode) {
+                if (pendingAction === "reset") {
+                  handleModeChange(timerMode);
+                } else if (pendingAction === "skip" && pendingMode) {
+                  handleModeChange(pendingMode);
+                } else if (pendingAction === "switch" && pendingMode) {
                   handleModeChange(pendingMode);
                 }
                 setShowConfirmSwitchDialog(false);
                 setPendingMode(null);
+                setPendingAction(null);
               }} 
               className="cursor-pointer flex-1 bg-red-500 hover:bg-red-650 text-white font-mono text-xs font-bold py-2.5 rounded-xl"
             >
-              Stop & Switch
+              {pendingAction === "reset" ? "Reset" : pendingAction === "skip" ? "Skip" : "Stop & Switch"}
             </Button>
           </div>
         </DialogContent>
